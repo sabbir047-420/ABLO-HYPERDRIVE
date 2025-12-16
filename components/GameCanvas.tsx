@@ -1,8 +1,9 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { GameState, Player, Enemy, Particle, Orb, Projectile, FloatingText, Vector } from '../types';
 import { COLORS, GAME_CONFIG, STORAGE_KEY_HIGHSCORE } from '../constants';
-import { Play, RotateCcw, Crosshair, Zap, Shield, Trophy, Pause } from 'lucide-react';
+import { Play, RotateCcw, Crosshair, Zap, Shield, Trophy, Pause, Volume2, VolumeX } from 'lucide-react';
 import { Button } from './Button';
+import { soundManager } from '../sound';
 
 export const GameCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -10,9 +11,9 @@ export const GameCanvas: React.FC = () => {
   const [currentScore, setCurrentScore] = useState(0);
   const [highScore, setHighScore] = useState(0);
   const [healthPercent, setHealthPercent] = useState(100);
+  const [isMuted, setIsMuted] = useState(soundManager.muted);
 
   // --- Game State Refs ---
-  // Using refs for everything in the loop for performance
   const playerRef = useRef<Player>({
     id: 'player',
     x: 0, y: 0,
@@ -42,7 +43,6 @@ export const GameCanvas: React.FC = () => {
   const generateId = () => Math.random().toString(36).substr(2, 9);
   const getDistance = (e1: { x: number; y: number }, e2: { x: number; y: number }) => Math.hypot(e1.x - e2.x, e1.y - e2.y);
   
-  // Haptic feedback helper
   const vibrate = (ms: number) => {
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
       navigator.vibrate(ms);
@@ -90,7 +90,6 @@ export const GameCanvas: React.FC = () => {
   // --- Core Mechanics ---
 
   const spawnEnemy = (w: number, h: number, difficulty: number) => {
-    // Spawn mostly outside screen
     const edge = Math.floor(Math.random() * 4);
     let x = 0, y = 0;
     const padding = 60;
@@ -109,7 +108,6 @@ export const GameCanvas: React.FC = () => {
     let speed = 2 + difficulty * 0.1;
     let color = COLORS.enemyChaser;
     
-    // Enemy Types
     if (roll > 0.85) {
       type = 'TANK';
       hp = 80 + difficulty * 5;
@@ -140,9 +138,8 @@ export const GameCanvas: React.FC = () => {
       return;
     }
 
-    // Auto-aim logic: Find nearest enemy
     let target: Enemy | null = null;
-    let minDist = 600; // Range
+    let minDist = 600;
 
     for (const enemy of enemiesRef.current) {
       const d = getDistance(p, enemy);
@@ -154,7 +151,6 @@ export const GameCanvas: React.FC = () => {
 
     if (target) {
       const angle = Math.atan2(target.y - p.y, target.x - p.x);
-      // Fire!
       projectilesRef.current.push({
         id: generateId(),
         x: p.x + Math.cos(angle) * p.radius,
@@ -165,14 +161,14 @@ export const GameCanvas: React.FC = () => {
           x: Math.cos(angle) * 15,
           y: Math.sin(angle) * 15
         },
-        damage: 10 + (p.weaponLevel * 2), // Damage scales with level
+        damage: 10 + (p.weaponLevel * 2),
         fromPlayer: true
       });
       
-      // Knockback player slightly
       p.velocity.x -= Math.cos(angle) * 1;
       p.velocity.y -= Math.sin(angle) * 1;
       
+      soundManager.playShoot(); // SOUND EFFECT
       p.weaponTimer = Math.max(5, GAME_CONFIG.playerFireRate - p.weaponLevel);
     }
   };
@@ -183,49 +179,40 @@ export const GameCanvas: React.FC = () => {
     const difficulty = Math.floor(playerRef.current.score / 100);
     const p = playerRef.current;
 
-    // 1. Player Movement (Mouse Follow with Lerp)
     const dx = mouseRef.current.x - p.x;
     const dy = mouseRef.current.y - p.y;
-    // Apply force based on distance, but cap it
     p.velocity.x += dx * 0.005 * p.speed;
     p.velocity.y += dy * 0.005 * p.speed;
     
-    // Friction
     p.velocity.x *= GAME_CONFIG.friction;
     p.velocity.y *= GAME_CONFIG.friction;
     
     p.x += p.velocity.x;
     p.y += p.velocity.y;
 
-    // Bound Player
     if (p.x < p.radius) p.x = p.radius;
     if (p.x > w - p.radius) p.x = w - p.radius;
     if (p.y < p.radius) p.y = p.radius;
     if (p.y > h - p.radius) p.y = h - p.radius;
 
-    // 2. Weapon
     fireWeapon();
 
-    // 3. Projectiles
     for (let i = projectilesRef.current.length - 1; i >= 0; i--) {
       const proj = projectilesRef.current[i];
       proj.x += proj.velocity.x;
       proj.y += proj.velocity.y;
 
-      // Remove if off screen
       if (proj.x < -50 || proj.x > w + 50 || proj.y < -50 || proj.y > h + 50) {
         projectilesRef.current.splice(i, 1);
         continue;
       }
 
-      // Hit Detection
       if (proj.fromPlayer) {
         let hit = false;
         for (const enemy of enemiesRef.current) {
           if (getDistance(proj, enemy) < enemy.radius + proj.radius) {
-            // HIT!
             enemy.hp -= proj.damage;
-            enemy.velocity.x += proj.velocity.x * 0.2; // Knockback
+            enemy.velocity.x += proj.velocity.x * 0.2;
             enemy.velocity.y += proj.velocity.y * 0.2;
             
             spawnText(enemy.x, enemy.y, Math.floor(proj.damage).toString(), COLORS.damageText, 12);
@@ -239,29 +226,22 @@ export const GameCanvas: React.FC = () => {
       }
     }
 
-    // 4. Enemies
     for (let i = enemiesRef.current.length - 1; i >= 0; i--) {
       const e = enemiesRef.current[i];
       
-      // Move towards player
       const angle = Math.atan2(p.y - e.y, p.x - e.x);
-      
-      // Rotation visual
       e.angle = angle;
 
-      // AI Movement
       const moveSpeed = e.speed;
       e.velocity.x += Math.cos(angle) * 0.2;
       e.velocity.y += Math.sin(angle) * 0.2;
       
-      // Cap velocity
       const currentSpeed = Math.hypot(e.velocity.x, e.velocity.y);
       if (currentSpeed > moveSpeed) {
          e.velocity.x = (e.velocity.x / currentSpeed) * moveSpeed;
          e.velocity.y = (e.velocity.y / currentSpeed) * moveSpeed;
       }
       
-      // Soft collision between enemies (avoid stacking)
       for (let j = 0; j < enemiesRef.current.length; j++) {
         if (i === j) continue;
         const other = enemiesRef.current[j];
@@ -277,29 +257,28 @@ export const GameCanvas: React.FC = () => {
       e.x += e.velocity.x;
       e.y += e.velocity.y;
 
-      // Player Collision
       const distToPlayer = getDistance(e, p);
       if (distToPlayer < e.radius + p.radius) {
-        // Damage Player
-        p.hp -= 1; // Drain fast if touching
-        addShake(5, 50); // Heavy shake + Vibration
-        if (frameRef.current % 10 === 0) {
+        p.hp -= 1;
+        addShake(5, 50);
+        
+        // Play damage sound every few frames to avoid spamming
+        if (frameRef.current % 15 === 0) {
+           soundManager.playDamage(); // SOUND EFFECT
            spawnText(p.x, p.y, "-HP", '#ef4444', 20);
            createExplosion((p.x + e.x)/2, (p.y + e.y)/2, '#ef4444', 5);
         }
         
-        // Push back enemy
         e.velocity.x *= -1;
         e.velocity.y *= -1;
       }
 
-      // Death
       if (e.hp <= 0) {
-        addShake(8, 10); // Light shake + Vibration on kill
+        addShake(8, 10);
+        soundManager.playExplosion(e.type === 'TANK' ? 'large' : 'small'); // SOUND EFFECT
         createExplosion(e.x, e.y, e.color, 15, 6);
         spawnText(e.x, e.y, "+100", COLORS.scoreText, 16);
         
-        // Drop Orb chance
         if (Math.random() > 0.5) {
            orbsRef.current.push({
              id: generateId(), x: e.x, y: e.y, radius: 6, color: COLORS.orb, velocity: {x:0, y:0}, value: 5, pulse: 0
@@ -312,13 +291,11 @@ export const GameCanvas: React.FC = () => {
       }
     }
 
-    // 5. Orbs (XP/Score)
     for (let i = orbsRef.current.length - 1; i >= 0; i--) {
       const orb = orbsRef.current[i];
       orb.pulse += 0.1;
       const d = getDistance(orb, p);
       
-      // Magnet
       if (d < 150) {
         orb.x += (p.x - orb.x) * 0.1;
         orb.y += (p.y - orb.y) * 0.1;
@@ -326,22 +303,21 @@ export const GameCanvas: React.FC = () => {
       
       if (d < p.radius + orb.radius) {
         p.score += 25;
-        p.weaponLevel = Math.min(20, 1 + Math.floor(p.score / 500)); // Level up weapon
-        p.hp = Math.min(p.maxHp, p.hp + 2); // Heal slightly
+        p.weaponLevel = Math.min(20, 1 + Math.floor(p.score / 500));
+        p.hp = Math.min(p.maxHp, p.hp + 2);
         setCurrentScore(p.score);
+        soundManager.playPowerup(); // SOUND EFFECT
         spawnText(p.x, p.y, "UPGRADE", COLORS.orb, 10);
         orbsRef.current.splice(i, 1);
-        vibrate(5); // Tiny vibration on collect
+        vibrate(5);
       }
     }
 
-    // 6. Spawning
     const spawnRate = Math.max(10, GAME_CONFIG.enemyBaseSpawnRate - difficulty);
     if (frameRef.current % spawnRate === 0) {
       spawnEnemy(w, h, difficulty);
     }
 
-    // 7. Particles
     for (let i = particlesRef.current.length - 1; i >= 0; i--) {
       const part = particlesRef.current[i];
       part.x += part.velocity.x;
@@ -351,7 +327,6 @@ export const GameCanvas: React.FC = () => {
       if (part.life <= 0) particlesRef.current.splice(i, 1);
     }
 
-    // 8. Floating Texts
     for (let i = textsRef.current.length - 1; i >= 0; i--) {
       const t = textsRef.current[i];
       t.x += t.velocity.x;
@@ -360,13 +335,12 @@ export const GameCanvas: React.FC = () => {
       if (t.life <= 0) textsRef.current.splice(i, 1);
     }
 
-    // 9. Screen Shake Decay
     if (shakeRef.current > 0) shakeRef.current *= 0.9;
     if (shakeRef.current < 0.5) shakeRef.current = 0;
 
-    // Check Game Over
     if (p.hp <= 0) {
-      vibrate(200); // Long vibration on death
+      vibrate(200);
+      soundManager.playGameOver(); // SOUND EFFECT
       setGameState(GameState.GAME_OVER);
     }
     setHealthPercent((p.hp / p.maxHp) * 100);
@@ -374,11 +348,9 @@ export const GameCanvas: React.FC = () => {
 
   // --- Render ---
   const draw = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
-    // Fill background
     ctx.fillStyle = COLORS.background;
     ctx.fillRect(0, 0, w, h);
 
-    // Apply Shake
     ctx.save();
     if (shakeRef.current > 0) {
       const dx = (Math.random() - 0.5) * shakeRef.current;
@@ -386,7 +358,6 @@ export const GameCanvas: React.FC = () => {
       ctx.translate(dx, dy);
     }
 
-    // Grid with parallax (based on player position)
     ctx.strokeStyle = '#1e293b';
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -396,7 +367,6 @@ export const GameCanvas: React.FC = () => {
     for (let y = gy; y < h; y+=50) { ctx.moveTo(0, y); ctx.lineTo(w, y); }
     ctx.stroke();
 
-    // Orbs
     orbsRef.current.forEach(orb => {
        ctx.fillStyle = orb.color;
        ctx.shadowBlur = 10;
@@ -408,7 +378,6 @@ export const GameCanvas: React.FC = () => {
        ctx.shadowBlur = 0;
     });
 
-    // Particles
     particlesRef.current.forEach(p => {
       ctx.globalAlpha = p.alpha;
       ctx.fillStyle = p.color;
@@ -418,7 +387,6 @@ export const GameCanvas: React.FC = () => {
       ctx.globalAlpha = 1;
     });
 
-    // Projectiles
     projectilesRef.current.forEach(p => {
        ctx.fillStyle = '#fff';
        ctx.shadowBlur = 15;
@@ -429,7 +397,6 @@ export const GameCanvas: React.FC = () => {
        ctx.shadowBlur = 0;
     });
 
-    // Enemies
     enemiesRef.current.forEach(e => {
        ctx.save();
        ctx.translate(e.x, e.y);
@@ -439,12 +406,10 @@ export const GameCanvas: React.FC = () => {
        ctx.shadowBlur = 10;
        ctx.shadowColor = e.color;
        
-       // Draw shapes based on type
        ctx.beginPath();
        if (e.type === 'CHASER') {
          ctx.rect(-e.radius, -e.radius, e.radius*2, e.radius*2);
        } else if (e.type === 'TANK') {
-         // Octagon
          for(let i=0; i<8; i++) {
            const a = (Math.PI*2/8)*i;
            const px = Math.cos(a)*e.radius;
@@ -453,7 +418,6 @@ export const GameCanvas: React.FC = () => {
          }
          ctx.closePath();
        } else {
-         // Triangle
          ctx.moveTo(e.radius, 0);
          ctx.lineTo(-e.radius, e.radius);
          ctx.lineTo(-e.radius, -e.radius);
@@ -461,9 +425,8 @@ export const GameCanvas: React.FC = () => {
        }
        ctx.fill();
        
-       // HP Bar for tank enemies
        if (e.type === 'TANK' && e.hp < e.maxHp) {
-         ctx.rotate(-e.angle); // Un-rotate
+         ctx.rotate(-e.angle);
          ctx.fillStyle = '#333';
          ctx.fillRect(-20, -40, 40, 6);
          ctx.fillStyle = '#f00';
@@ -473,7 +436,6 @@ export const GameCanvas: React.FC = () => {
        ctx.restore();
     });
 
-    // Player
     const p = playerRef.current;
     ctx.shadowBlur = 20;
     ctx.shadowColor = COLORS.playerGlow;
@@ -482,7 +444,6 @@ export const GameCanvas: React.FC = () => {
     ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
     ctx.fill();
     
-    // Player direction indicator
     const aimAngle = Math.atan2(mouseRef.current.y - p.y, mouseRef.current.x - p.x);
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 3;
@@ -492,7 +453,6 @@ export const GameCanvas: React.FC = () => {
     ctx.stroke();
     ctx.shadowBlur = 0;
 
-    // Floating Texts
     textsRef.current.forEach(t => {
       ctx.globalAlpha = t.life;
       ctx.fillStyle = t.color;
@@ -501,7 +461,7 @@ export const GameCanvas: React.FC = () => {
       ctx.globalAlpha = 1;
     });
 
-    ctx.restore(); // End shake
+    ctx.restore();
   };
 
   const gameLoop = useCallback(() => {
@@ -522,14 +482,12 @@ export const GameCanvas: React.FC = () => {
     return () => cancelAnimationFrame(requestRef.current!);
   }, [gameLoop]);
 
-  // --- Handlers ---
   const handleMouseMove = (e: React.MouseEvent | React.TouchEvent) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     let x, y;
     if ('touches' in e) {
-       // Touch logic
        if(e.touches.length > 0) {
          x = e.touches[0].clientX;
          y = e.touches[0].clientY;
@@ -537,7 +495,6 @@ export const GameCanvas: React.FC = () => {
          return;
        }
     } else {
-       // Mouse logic
        x = (e as React.MouseEvent).clientX;
        y = (e as React.MouseEvent).clientY;
     }
@@ -548,10 +505,11 @@ export const GameCanvas: React.FC = () => {
     const canvas = canvasRef.current;
     if(!canvas) return;
     
-    // Trigger audio/vibration context unlock if needed
+    soundManager.init(); // Initialize audio
+    soundManager.playGameStart(); // Start sound
+    soundManager.startDrone();
     vibrate(50);
     
-    // Reset
     playerRef.current = {
       ...playerRef.current,
       x: canvas.width/2, y: canvas.height/2,
@@ -571,17 +529,28 @@ export const GameCanvas: React.FC = () => {
 
   const togglePause = () => {
     setGameState(prev => {
-      if (prev === GameState.PLAYING) return GameState.PAUSED;
-      if (prev === GameState.PAUSED) return GameState.PLAYING;
+      if (prev === GameState.PLAYING) {
+        soundManager.stopDrone();
+        return GameState.PAUSED;
+      }
+      if (prev === GameState.PAUSED) {
+        soundManager.startDrone();
+        return GameState.PLAYING;
+      }
       return prev;
     });
   };
 
   const quitToMenu = () => {
+    soundManager.stopDrone();
     setGameState(GameState.MENU);
   };
 
-  // Resize handler
+  const toggleMute = () => {
+    const m = soundManager.toggleMute();
+    setIsMuted(m);
+  };
+
   useEffect(() => {
      const resize = () => {
        if(canvasRef.current) {
@@ -633,16 +602,26 @@ export const GameCanvas: React.FC = () => {
                     <Trophy size={14} /> HI: {highScore.toLocaleString()}
                  </div>
               </div>
+              
+              <div className="flex gap-2">
+                 {/* Mute Button */}
+                 <button 
+                    onClick={toggleMute}
+                    className="p-3 bg-slate-800/80 text-slate-300 rounded-xl border border-slate-700 hover:bg-slate-700 active:bg-slate-600 transition-colors shadow-lg backdrop-blur-sm pointer-events-auto touch-manipulation"
+                  >
+                    {isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />}
+                 </button>
 
-              {/* Pause Button */}
-              {(gameState === GameState.PLAYING || gameState === GameState.PAUSED) && (
-                <button 
-                  onClick={togglePause}
-                  className="p-3 bg-slate-800/80 text-cyan-400 rounded-xl border border-slate-700 hover:bg-slate-700 active:bg-slate-600 transition-colors shadow-lg backdrop-blur-sm pointer-events-auto touch-manipulation"
-                >
-                  {gameState === GameState.PAUSED ? <Play size={24} fill="currentColor" /> : <Pause size={24} fill="currentColor" />}
-                </button>
-              )}
+                 {/* Pause Button */}
+                 {(gameState === GameState.PLAYING || gameState === GameState.PAUSED) && (
+                  <button 
+                    onClick={togglePause}
+                    className="p-3 bg-slate-800/80 text-cyan-400 rounded-xl border border-slate-700 hover:bg-slate-700 active:bg-slate-600 transition-colors shadow-lg backdrop-blur-sm pointer-events-auto touch-manipulation"
+                  >
+                    {gameState === GameState.PAUSED ? <Play size={24} fill="currentColor" /> : <Pause size={24} fill="currentColor" />}
+                  </button>
+                 )}
+              </div>
             </div>
          </div>
          
