@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { GameState, Player, Enemy, Particle, Orb, Projectile, FloatingText, Vector } from '../types';
 import { COLORS, GAME_CONFIG, STORAGE_KEY_HIGHSCORE } from '../constants';
-import { Play, RotateCcw, Crosshair, Zap, Shield, Trophy } from 'lucide-react';
+import { Play, RotateCcw, Crosshair, Zap, Shield, Trophy, Pause } from 'lucide-react';
 import { Button } from './Button';
 
 export const GameCanvas: React.FC = () => {
@@ -569,6 +569,18 @@ export const GameCanvas: React.FC = () => {
     setGameState(GameState.PLAYING);
   };
 
+  const togglePause = () => {
+    setGameState(prev => {
+      if (prev === GameState.PLAYING) return GameState.PAUSED;
+      if (prev === GameState.PAUSED) return GameState.PLAYING;
+      return prev;
+    });
+  };
+
+  const quitToMenu = () => {
+    setGameState(GameState.MENU);
+  };
+
   // Resize handler
   useEffect(() => {
      const resize = () => {
@@ -609,15 +621,28 @@ export const GameCanvas: React.FC = () => {
       {/* HUD Layer */}
       <div className="absolute inset-0 pointer-events-none p-4 flex flex-col justify-between">
          {/* Top Bar */}
-         <div className="flex justify-between items-start">
+         <div className="flex justify-between items-start pointer-events-auto">
             <div>
                <h1 className="text-3xl font-display font-bold text-white italic tracking-tighter drop-shadow-lg">ABLO<span className="text-cyan-400">HYPER</span></h1>
                <div className="text-3xl font-mono text-yellow-400 drop-shadow-md mt-1">{currentScore.toLocaleString()}</div>
             </div>
-            <div className="flex flex-col items-end gap-1">
-               <div className="flex items-center gap-2 text-slate-400 font-mono text-sm">
-                  <Trophy size={14} /> HI: {highScore.toLocaleString()}
-               </div>
+            
+            <div className="flex gap-4 items-start">
+              <div className="flex flex-col items-end gap-1">
+                 <div className="flex items-center gap-2 text-slate-400 font-mono text-sm">
+                    <Trophy size={14} /> HI: {highScore.toLocaleString()}
+                 </div>
+              </div>
+
+              {/* Pause Button */}
+              {(gameState === GameState.PLAYING || gameState === GameState.PAUSED) && (
+                <button 
+                  onClick={togglePause}
+                  className="p-3 bg-slate-800/80 text-cyan-400 rounded-xl border border-slate-700 hover:bg-slate-700 active:bg-slate-600 transition-colors shadow-lg backdrop-blur-sm pointer-events-auto touch-manipulation"
+                >
+                  {gameState === GameState.PAUSED ? <Play size={24} fill="currentColor" /> : <Pause size={24} fill="currentColor" />}
+                </button>
+              )}
             </div>
          </div>
          
@@ -636,6 +661,21 @@ export const GameCanvas: React.FC = () => {
              </div>
          </div>
       </div>
+
+      {/* Pause Screen */}
+      {gameState === GameState.PAUSED && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-slate-950/70 backdrop-blur-md">
+           <h2 className="text-5xl font-display font-bold text-white mb-8 tracking-widest drop-shadow-2xl">SYSTEM PAUSED</h2>
+           <div className="flex flex-col gap-4 w-64">
+             <Button onClick={togglePause} icon={<Play size={20} />} className="w-full">
+               RESUME
+             </Button>
+             <Button variant="secondary" onClick={quitToMenu} icon={<RotateCcw size={20} />} className="w-full">
+               ABORT MISSION
+             </Button>
+           </div>
+        </div>
+      )}
 
       {/* Menu Screen */}
       {gameState === GameState.MENU && (
@@ -673,9 +713,14 @@ export const GameCanvas: React.FC = () => {
               {currentScore.toLocaleString()}
            </div>
            
-           <Button variant="danger" onClick={startGame} icon={<RotateCcw size={24} />} className="touch-manipulation">
-              RESTART MISSION
-           </Button>
+           <div className="flex flex-col gap-4">
+             <Button variant="danger" onClick={startGame} icon={<RotateCcw size={24} />} className="touch-manipulation">
+                RESTART MISSION
+             </Button>
+             <Button variant="secondary" onClick={quitToMenu} className="touch-manipulation">
+                MAIN MENU
+             </Button>
+           </div>
         </div>
       )}
     </div>
